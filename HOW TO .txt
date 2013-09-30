@@ -1,0 +1,58 @@
+---------
+EXPORT
+---------
+export.pl  -u=root -p=mysql -H=127.0.0.1 -P=3310 -b=1 -i=employees,sakila,world -o=/tmp/ --basedir=/home/mysql/templates/mysql-55p -m=exp
+export.pl  -u=root -p=mysql -H=127.0.0.1 -P=3310 -b=1 -x=performance_schema,information_schema,mysql -o=/tmp/ --basedir=/home/mysql/templates/mysql-55p -m=exp
+
+---------
+Import 
+---------
+export.pl  -u=root -p=mysql -H=127.0.0.1 -P=3310 -b=1 -t=3_12_2011 -i=employees,sakila,world -o=/tmp/ --basedir=/home/mysql/templates/mysql-55p -m=imp
+
+
+Usage: export.pl
+       user|u
+       password|p
+       host|H
+       port|P
+       outfile|o
+       help|h
+       batch|b
+       time|t
+       mode|m
+       excludelist|x
+       includelist|i
+
+
+--help, -h
+    Display this help message
+
+--host=HOSTNAME, -H=HOSTNAME
+    Connect to the MySQL server on the given host
+
+--user=USERNAME, -u=USERNAME
+    The MySQL username to use when connecting to the server
+
+--password=PASSWORD, -p=PASSWORD
+    The password to use when connecting to the server
+
+--port=PORT, -P=PORT
+    The socket file to use when connecting to the server
+
+--includelist|i comma separated list of databases
+
+--exludelist|x comma separeted list of databases
+
+--outfile=FULLPATH, -o=FULLPATH
+    Directory for backup files
+
+--batch|b  if it has to skip any confirmation default [0]
+    values 0 = disable (ask)
+           1 = enable (don't ask)
+
+--time|t This is the time stamp to append to the database name format is dd_mm_yyyy eg -t=23_12_2008
+
+--mode|m The mode to operate [exp | imp] default is [exp]
+
+
+
