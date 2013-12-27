@@ -331,7 +331,6 @@ if (
         'includelist|i:s' => \$Param->{includelist},
         'batch|b:i' => \$Param->{batch},
         'basedir:s' => \$Param->{mysqlbase},
-        'help|h:s'       => \$help,
         'defaults-file:s'=>\$defaultfile,
         'SizeChunckByteLimit:i'=>\$sizeByteLimit,
         'tar_output:i'=>\$tar,
@@ -1309,11 +1308,13 @@ export.pl  -u=root -p=mysql -H=127.0.0.1 -P=3310 -b=1 -x=performance_schema,info
 Use TAR and compression
 -----------------------
 export.pl  -u=root -p=mysql -H=127.0.0.1 -P=3310 -b=1 --tar_output=1 --compress_mode=1 -x=performance_schema,information_schema,mysql -o=/tmp/ --basedir=/home/mysql/templates/mysql-55p -m=exp
+export.pl  -u=backup -p=mysql -H=192.168.0.35 -P=5510 -b=1 --tar_output=1  --compress_mode=1 --multithreads_th_number=16  -t=27_12_2013 -x=performance_schema,mysql,test,information_schema -o=/home/mysql/backups/ --basedir=/home/mysql/templates/mysql-56p -m=imp
 
 ---------
 Import 
 ---------
 export.pl  -u=root -p=mysql -H=127.0.0.1 -P=3310 -b=1 -t=3_12_2011 -i=employees,sakila,world -o=/tmp/ --basedir=/home/mysql/templates/mysql-55p -m=imp
+export.pl  -u=backup -p=mysql -H=192.168.0.35 -P=5510 -b=1 --tar_output=1  --compress_mode=1 --multithreads_th_number=16  -t=27_12_2013 -x=performance_schema,mysql,test,information_schema -o=/home/mysql/backups/ --basedir=/home/mysql/templates/mysql-56p -m=imp
 
 Use TAR, compression and multi threads
 -----------------------------------------
