@@ -21,6 +21,7 @@
 
 use threads ('yield','stack_size' => 64*4096,'exit' => 'threads_only','stringify');
 use File::Path 'rmtree';
+use Tie::File;
 use Cwd qw();
 use IO::Compress::Gzip qw(gzip $GzipError) ;
 use IO::Uncompress::Gunzip qw(gunzip $GunzipError) ;
@@ -29,6 +30,7 @@ use visualization;
 use commonfunctions;
 use mysqldbcommon;
 use ConfigIniSimple;
+
 
 use DirHandle;
 
@@ -70,7 +72,7 @@ my $defaultfile;
 my $sizeByteLimit=10485760;
 my $tar = 0;
 my $compress = 0;
-my $parallel = 1;
+my $parallel = 0;
 
 $Param->{user}       = '';
 $Param->{password}   = '';
@@ -90,7 +92,7 @@ my $invalidator  = 0 ;
 
 $Param->{appheader}.="\t=============================================================================\n";
 $Param->{appheader}.="\t*****************************************************************************\n";
-$Param->{appheader}.="\t\t\t\Export Table MySQL \n";
+$Param->{appheader}.="\t\t\t\ Export Table MySQL \n";
 $Param->{appheader}.="\t*****************************************************************************\n";
 $Param->{appheader}.="\t=============================================================================\n";
 
@@ -139,10 +141,7 @@ sub init()
         
     }
     
-    if($parallel == 0){
-        $parallel = 1;
-    }
-
+   
     $Param->{reset} = 0;
     
     if( $host eq '' )
@@ -336,6 +335,7 @@ if (
         'tar_output:i'=>\$tar,
         'compress_mode:i'=>\$compress,
         'multithreads_th_number:i'=>\$parallel,
+        'server_role:s'=>\$Param->{server_role},
     )
   )
 {
@@ -476,7 +476,7 @@ sub exportDataFromTables($)
     my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime(time);
     $mon = ++$mon;
     $year = $year+=1900;
-    my $BinlogInfo;
+    my $BinlogInfo ="";
     my $cmd;
     my $sth;
     my $time = localtime;
@@ -516,10 +516,27 @@ sub exportDataFromTables($)
     
     
     $time = localtime;
-    print "FLUSH NO_WRITE_TO_BINLOG TABLES WITH READ LOCK $time [START]] \n";
-    $dbh->do("FLUSH NO_WRITE_TO_BINLOG TABLES WITH READ LOCK");
+  
+    print "Preparing server for export $time  \n";
+  
+    my $timeout = get_variablesByName($dbh,"wait_timeout");
+    my $wsrepOn=  get_variablesByName($dbh,"wsrep_on");
+    my $wsrepDesync=  get_variablesByName($dbh,"wsrep_desync");
+    
+    $dbh->do("SET global wait_timeout=14400");
+    $dbh->do("SET wait_timeout=14400");
+    if(defined $wsrepOn && $wsrepOn eq "ON" && $wsrepDesync eq "OFF"){
+        #$dbh->do("SET GLOBAL wsrep_desync=OFF");
+        $dbh->do("SET GLOBAL wsrep_desync=ON");
+    }
+    if (defined $Param->{server_role} && $Param->{server_role} eq 'master'){
+        print "FLUSH NO_WRITE_TO_BINLOG TABLES WITH READ LOCK $time [START]] \n";
+        $dbh->do("FLUSH NO_WRITE_TO_BINLOG TABLES WITH READ LOCK");
+    }
+
+
     $time = localtime;
-    print "FLUSH NO_WRITE_TO_BINLOG TABLES WITH READ LOCK $time [END] \n";
+      
     $timeAllstart = localtime; #[gettimeofday];
     $timeArAllstart = [gettimeofday];
 
@@ -554,7 +571,73 @@ sub exportDataFromTables($)
               }
               
             }
-            $sth->finish();
+            if (defined $Param->{server_role} && ($Param->{server_role} eq 'slave' || $Param->{server_role} eq 'nolock') ){
+                $cmd = "SHOW SLAVE STATUS";
+                
+                $sth = $dbh->prepare($cmd);
+                if ( DBI::err() ) {
+                        if ( $Param->{PrintError} ) {
+                            print "Error: " . DBI::errstr() . "\n";
+                        }
+                }
+    
+                $sth->execute();
+                
+                if (defined($sth))
+                {
+                  my $row = undef;
+                  while ( $row = $sth->fetchrow_hashref() )
+                  {
+                    
+                    
+                    my $Master_Host = $row->{'Master_Host'};
+                    my $Master_User = $row->{'Master_User'};
+                    my $Master_Port = $row->{'Master_Port'};
+                    my $Master_Log_File = $row->{'Master_Log_File'};
+                    my $Read_Master_Log_Pos = $row->{'Read_Master_Log_Pos'};
+                    my $Relay_Log_File = $row->{'Relay_Log_File'};
+                    my $Relay_Log_Pos = $row->{'Relay_Log_Pos'};
+                    my $Relay_Master_Log_File = $row->{'Relay_Master_Log_File'};
+                    my $Replicate_Do_DB = $row->{'Replicate_Do_DB'};
+                    my $Replicate_Ignore_DB = $row->{'Replicate_Ignore_DB'};
+                    my $Replicate_Do_Table = $row->{'Replicate_Do_Table'};
+                    my $Replicate_Ignore_Table  = $row->{'Replicate_Ignore_Table'};
+                    my $Replicate_Wild_Do_Table = $row->{'Replicate_Wild_Do_Table'};
+                    my $Replicate_Wild_Ignore_Table = $row->{'Replicate_Wild_Ignore_Table'};
+                    my $Exec_Master_Log_Pos = $row->{'Exec_Master_Log_Pos'};
+                    my $Relay_Log_Space = $row->{'Relay_Log_Space'};
+                    my $Replicate_Ignore_Server_Ids = $row->{'Replicate_Ignore_Server_Ids'};
+                    my $Master_Server_Id = $row->{'Master_Server_Id'};
+                    $BinlogInfo = $BinlogInfo . "\n";
+                    
+                    $BinlogInfo = $BinlogInfo."Master_Host=".$Master_Host ."\n";
+                    $BinlogInfo = $BinlogInfo."Master_User=".$Master_User ."\n";
+                    $BinlogInfo = $BinlogInfo."Master_Port=".$Master_Port ."\n";
+                    $BinlogInfo = $BinlogInfo."Master_Log_File=".$Master_Log_File ."\n";
+                    $BinlogInfo = $BinlogInfo."Read_Master_Log_Pos=".$Read_Master_Log_Pos ."\n";
+                    $BinlogInfo = $BinlogInfo."Relay_Log_File=".$Relay_Log_File ."\n";
+                    $BinlogInfo = $BinlogInfo."Relay_Log_Pos=".$Relay_Log_Pos ."\n";
+                    $BinlogInfo = $BinlogInfo."Relay_Master_Log_File=".$Relay_Master_Log_File ."\n";
+                    $BinlogInfo = $BinlogInfo."Replicate_Do_DB=".$Replicate_Do_DB ."\n";
+                    $BinlogInfo = $BinlogInfo."Replicate_Ignore_DB=".$Replicate_Ignore_DB ."\n";
+                    $BinlogInfo = $BinlogInfo."Replicate_Do_Table=".$Replicate_Do_Table ."\n";
+                    $BinlogInfo = $BinlogInfo."Replicate_Ignore_Table=".$Replicate_Ignore_Table ."\n";
+                    $BinlogInfo = $BinlogInfo."Replicate_Wild_Do_Table=".$Replicate_Wild_Do_Table ."\n";
+                    $BinlogInfo = $BinlogInfo."Replicate_Wild_Ignore_Table=".$Replicate_Wild_Ignore_Table ."\n";
+                    $BinlogInfo = $BinlogInfo."Exec_Master_Log_Pos=".$Exec_Master_Log_Pos ."\n";
+                    $BinlogInfo = $BinlogInfo."Relay_Log_Space=".$Relay_Log_Space ."\n";
+                    $BinlogInfo = $BinlogInfo."Replicate_Ignore_Server_Ids=".$Replicate_Ignore_Server_Ids ."\n";
+                    $BinlogInfo = $BinlogInfo."Master_Server_Id=".$Master_Server_Id ."\n";                
+    
+                  }
+                  
+                }
+                
+            }
+            
+            
+            
+            
     #Get master log position [END]
 
 
@@ -633,66 +716,81 @@ sub exportDataFromTables($)
         my $localParallel = $parallel;
         
         #foreach my $localTable(sort(keys(%tablesMap))){
-        my @KeyTables = @tables;
+        my @KeyTables = sort @tables;
         foreach (my $iCTables = 0;$iCTables< @KeyTables;){
             $dimTable = $tables[$iCTables];
             #my $localTable = $KeyTables[$iCTables];
-            
-ADDToPool:            
-            if($remainingTables < $localParallel){
-                $localParallel= $remainingTables;
-            }
 
-            for (my $iThCount = 0;$iThCount <= $localParallel; ){
-                $remainingTables--;
-                $dimTable = $tables[$iCTables];
-                   
-                $ThreadsPool{$iThCount}= threads->create(sub {return  exportTable($dimTable,$key, $dbPath, get_connection($dsn, $user, $pass))});
-                $itables++;
-                $iCTables++;
-                $iThCount++
-            }
-THLoop:
-            for my $keyTh (keys(%ThreadsPool)){
-                my $thr = $ThreadsPool{$keyTh};
-                if(defined $thr && $thr->is_joinable()){
-                    my $thValue = $thr->join();
-                    $irows = $irows + $thValue;
-                    thr->exit() if thr->can('exit');
-                    delete $ThreadsPool{$keyTh};
-                }
-               
-                #$irows = $irows + loadTable($TableObjectLoc, get_connection($dsn, $user, $pass), $Param, $key);
-            }
-            #sleep 1;
-            if($Param->{debug} == 1)
-            {
-                print "Thread running pool  ".keys(%ThreadsPool)."\n";
-            }
-
-            if(keys(%ThreadsPool) > 0 && keys(%ThreadsPool) < 2 && $localParallel > 1)
-            {
-                goto ADDToPool;
+            if($parallel > 0){
+                my $thId = 0;
+                            
+                ADDToPool:            
+                            if($remainingTables < $localParallel){
+                                $localParallel= $remainingTables;
+                            }
                 
+                            for (my $iThCount = keys(%ThreadsPool);$iThCount < $localParallel; ){
+                                $remainingTables--;
+                                $dimTable = $tables[$iCTables];
+                                
+                                
+                                   
+                                $ThreadsPool{$thId + $iThCount}= threads->create(sub {return  exportTable($dimTable,$key, $dbPath, get_connection($dsn, $user, $pass))});
+                                $itables++;
+                                $iCTables++;
+                                $iThCount++
+                            }
+                THLoop:
+                            $dbh->do("show global status");
+                            for my $keyTh (keys(%ThreadsPool)){
+                                my $thr = $ThreadsPool{$keyTh};
+                                if(defined $thr && $thr->is_joinable() && !$thr->is_running()){
+                                    my $thValue = $thr->join();
+                                    $irows = $irows + $thValue;
+                                    thr->exit() if thr->can('exit');
+                                    delete $ThreadsPool{$keyTh};
+                                }
+                                
+                               $thId = $thId < $keyTh?$keyTh:$thId; 
+                                #$irows = $irows + loadTable($TableObjectLoc, get_connection($dsn, $user, $pass), $Param, $key);
+                            }
+                            sleep 2;
+                            if($Param->{debug} == 1)
+                            {
+                                print "Thread running pool  ".keys(%ThreadsPool)."\n";
+                            }
+                
+                            if(keys(%ThreadsPool) > 0 && keys(%ThreadsPool) < $parallel && $localParallel > 1)
+                            {
+                                goto ADDToPool;
+                                
+                            }
+                            elsif(keys(%ThreadsPool) > 0){
+                                goto THLoop;
+                            }
+                            #else{
+                            #    print "\n AAAAAAAAAAAA \n"
+                            #    
+                            #}
+                            }
+            else{
+                
+                $irows = $irows + exportTable($dimTable,$key, $dbPath, get_connection($dsn, $user, $pass));
+                $iCTables++;
+                $itables++;
             }
-            elsif(keys(%ThreadsPool) > 0){
-                goto THLoop;
-            }
-            #else{
-            #    print "\n AAAAAAAAAAAA \n"
-            #    
-            #}
                 
         }
-       for my $keyTh (keys(%ThreadsPool)){
-        my $thr = $ThreadsPool{$keyTh};
-            if(defined $thr && $thr->is_joinable()){
-                my $thValue = $thr->join();
-                thr->exit() if thr->can('exit');
-                delete $ThreadsPool{$keyTh};
+        if($parallel > 0){
+            for my $keyTh (keys(%ThreadsPool)){
+             my $thr = $ThreadsPool{$keyTh};
+                 if(defined $thr && $thr->is_joinable() && !$thr->is_running()){
+                     my $thValue = $thr->join();
+                     thr->exit() if thr->can('exit');
+                     delete $ThreadsPool{$keyTh};
+                 }
             }
-       }
-
+        }
         
 
        if($tar > 0){
@@ -737,6 +835,12 @@ THLoop:
     
     #$dbh->do("COMMIT");
     $dbh->do("UNLOCK TABLES") or warn "";
+    print "FLUSH NO_WRITE_TO_BINLOG TABLES WITH READ LOCK $time (UNLOCK TABLES) [END] \n";
+    $dbh->do("SET global wait_timeout=".$timeout);
+    if(defined $wsrepOn && $wsrepOn eq "ON"){
+        $dbh->do("SET GLOBAL wsrep_desync=OFF");
+    }
+
 
     ####################################################################
     # IF Slave role stop slave before doing dump
@@ -802,7 +906,7 @@ sub exportTable($$$$){
    
     my $rows = undef;
     $cmd = "SELECT SQL_NO_CACHE * INTO OUTFILE '${dbPath}/${dimTableExp}' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES TERMINATED BY '\\r\\n'   FROM ${key}.${dimTable} LOCK IN SHARE MODE" ;
-
+    #system("echo 3 > /proc/sys/vm/drop_caches");
     #$cmd = "SELECT COLUMN_NAME, Data_TYPE, NUMERIC_PRECISION, CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS where table_schema='$key' and table_name='$dimTable'";
 
     my $loctime = localtime;
@@ -818,7 +922,7 @@ sub exportTable($$$$){
     if($filesize > $Param->{sizelimit}){
         $Param->{splitfile} = "${dbPath}/${dimTable}";
         $Param->{splitrows} = $rows;
-        splitFile($Param,$filesize);
+        splitFile($Param,$filesize,$dbh);
         #my $thr = threads->create('splitFile', $Param,$filesize);
         #$thr->join();
 #                $chunks = splitFile($Param,"${dbPath}/${dimTableExp}",$rows);
@@ -949,6 +1053,11 @@ sub impDataInToTables($)
         $dbh->do('SET autocommit=0');
         $dbh->do('SET FOREIGN_KEY_CHECKS=0');
         $dbh->do('SET UNIQUE_CHECKS=0');
+        my $timeout = get_variablesByName($dbh,"wait_timeout");
+        my $wsrepOn=  get_variablesByName($dbh,"wsrep_on");
+        $dbh->do("SET global wait_timeout=14400");
+        $dbh->do("SET wait_timeout=14400");
+
         #foreach $name (sort readdir(ETC)) { # list context, sorted
         #    print "$name\n"; # prints ., .., passwd, group, and so on
         #}
@@ -956,6 +1065,8 @@ sub impDataInToTables($)
         #browse the directory and identify if we have simple table or split one
         # also check for compression and define prepare for parallel execution
         no warnings 'numeric';
+        my $iFilecount = 1;
+        
         foreach my $file ( sort { $a <=> $b } readdir $d ) {            
             my $tableFile ='';
             my $tableName = '';
@@ -963,33 +1074,55 @@ sub impDataInToTables($)
             my $isSplit =0;
             my $isCompress =0;
             my @TableFiles;
-            
-            #if($Param->{debug} == 1)
-            #{
-            #    print "Processing  $file\n" if -T "$dbPath/$file";
-            #}
     
             next if $file =~ /^\.\.?$/;     # skip . and ..
             next if $file =~ /\.sql?$/;     # skip . and ..
             next if $file =~ /\.log?$/;     # skip . and ..
             next if $file =~ /\.info?$/;     # skip . and ..
             
+            if($Param->{debug} == 1){print "Loading in the Hash  $file  full $dbPath/$file \n";}
+            
             $extention = substr($file,index($file,'.')+1,length($file));
             my $index = index($file,'.');
             if(index($file,'#') > 0){
                 $index = index($file,'#');
-                #print "Processing  Chunk file $file\n";
+                if($Param->{debug} == 1){print "Loading information Chunk file $file\n";}
             }
             $tableName = substr($file,0,$index);
             $tableFile = $dbPath."/".$file;
-            $tablesMap{$tableName}{name}=$tableName;
-            if( defined @{$tablesMap{$tableName}{path}}){
-                @TableFiles=@{$tablesMap{$tableName}{path}};
+            
+            if(defined $tablesMap{$tableName} && $tablesMap{$tableName}{name} ne ""){
+                if($Param->{debug} == 1){print "Table $tableName already in the MAP\n"};
+                
+                @TableFiles = @{$tablesMap{$tableName}{path}};
+                
+                if($Param->{debug} == 1){print "Table $tableName MAPFILE HAS ".$#TableFiles."\n"};
+                
+                
+                if( defined $tableFile){
+                    push(@TableFiles,$tableFile);
+                }
+                $tablesMap{$tableName}{path}=\@TableFiles;
             }
-            push(@TableFiles,$tableFile);
-            $tablesMap{$tableName}{path}=\@TableFiles;
-            $tablesMap{$tableName}{isSplit}=index($file,'#') >0?1:0;
-            $tablesMap{$tableName}{isCompress}=$extention eq "gz"?1:0;
+            else
+            {
+                if($Param->{debug} == 1){print "Table $tableName IS NEW in the MAP\n"};
+                if( defined $tableFile){
+                    push(@TableFiles,$tableFile);
+                }
+                
+                $tablesMap{$tableName}{name}=$tableName;
+                $tablesMap{$tableName}{path}=\@TableFiles;
+                $tablesMap{$tableName}{isSplit}=index($file,'#') >0?1:0;
+                $tablesMap{$tableName}{isCompress}=$extention eq "gz"?1:0;
+
+            }
+           # my $locPath = @{$tablesMap{$tableName}{path}};
+#            if( defined $tableFile){
+#                $tablesMap{$tableName}{path}=$tableFile;
+#           }
+
+            $iFilecount++;
             
             
         }
@@ -1001,67 +1134,107 @@ sub impDataInToTables($)
         my $localParallel = $parallel;
         
         #foreach my $localTable(sort(keys(%tablesMap))){
-        my @KeyTables = keys(%tablesMap);
-        foreach (my $iCTables = 0;$iCTables< @KeyTables;){
-            #my $localTable = $KeyTables[$iCTables];
-            my %ThreadsPool;
-ADDToPool:            
-            if($remainingTables < $localParallel){
-                $localParallel= $remainingTables;
-            }
-
-            for (my $iThCount = 1;$iThCount <= $localParallel; ){
-                $remainingTables--;
+        my @KeyTables = sort keys(%tablesMap);
+        
+        if($Param->{debug} == 1){
+            
+            print "Total File counted $iFilecount Total Objects loaded ".$#KeyTables." \n";
+            foreach (my $iCTables = 0;$iCTables< @KeyTables;){
                 my $TableObjectLoc = $tablesMap{$KeyTables[$iCTables]};
-                   
-                $ThreadsPool{$iThCount}= threads->create(sub {return loadTable($TableObjectLoc, get_connection($dsn, $user, $pass), $Param, $key)});
-                $itables++;
+                print "Table Name $TableObjectLoc->{name} FILES=TableFiles# :".$#{$TableObjectLoc->{path}}." \n";
                 $iCTables++;
-                $iThCount++
             }
-THLoop:
-            for my $keyTh (keys(%ThreadsPool)){
-                my $thr = $ThreadsPool{$keyTh};
-                if(defined $thr && $thr->is_joinable()){
-                    my $thValue = $thr->join();
-                    if(defined $thValue ){
-                        $irows = $irows + $thValue;
-                    }
-                    thr->exit() if thr->can('exit');
-                    delete $ThreadsPool{$keyTh};
-                }
-               
-                #$irows = $irows + loadTable($TableObjectLoc, get_connection($dsn, $user, $pass), $Param, $key);
-            }
-            sleep 2;
-            if($Param->{debug} == 1)
-            {
-                print "Thread running pool  ".keys(%ThreadsPool)."\n";
-            }
-
-            if(keys(%ThreadsPool) > 0 && keys(%ThreadsPool) < 2 && $localParallel < 1)
-            {
-                goto ADDToPool;
+        }
+        
+        
+        foreach (my $iCTables = 0;$iCTables< @KeyTables;){
+            if($parallel > 0){
+                            #my $localTable = $KeyTables[$iCTables];
+                            my %ThreadsPool;
+                            my $thId = "A";
+                            
+                ADDToPool:            
+                            if($remainingTables < $localParallel){
+                                $localParallel= $remainingTables;
+                            }
                 
+                            for (my $iThCount = keys(%ThreadsPool);$iThCount < $localParallel; ){
+                                $remainingTables--;
+                                my $TableObjectLoc = $tablesMap{$KeyTables[$iCTables]};
+                                if($Param->{debug} == 1){print "Thread running pool  ".keys(%ThreadsPool)." remaining tables ".$remainingTables."\n";}
+                                
+                                $ThreadsPool{"$thId"."$iThCount"}= threads->create(sub {return loadTable($TableObjectLoc, get_connection($dsn, $user, $pass), $Param, $key)});
+                                if($Param->{debug} == 1){
+                                    print "Thread running pool  ".keys(%ThreadsPool)." Add thread id =".$thId.$iThCount." \n";
+                                }
+                                $itables++;
+                                $iCTables++;
+                                $iThCount++
+                            }
+                THLoop:
+                            my $lenghtTHP = (keys(%ThreadsPool));
+                            #print $lenghtTHP ;
+                            
+                            
+                            for my $keyTh (keys(%ThreadsPool)){
+                                my $thr = $ThreadsPool{$keyTh};
+                                if(defined $thr && $thr->is_joinable() && !$thr->is_running()){
+                                    if($Param->{debug} == 1){
+                                        print "Thread running pool  ".keys(%ThreadsPool)." join thread thread id =".$keyTh." for closure\n";
+                                    }
+
+                                    my $thValue = $thr->join();
+                                    if(defined $thValue ){
+                                        $irows = $irows + $thValue;
+                                    }
+                                    thr->exit(0) if thr->can('exit');
+                                    if($Param->{debug} == 1){
+                                        print "Thread running pool  ".keys(%ThreadsPool)." DELETING thread thread id =".$keyTh." returning value = ".$thValue."\n";
+                                    }
+                                    
+                                    delete $ThreadsPool{$keyTh};
+                                }
+                                $thId = $thId < $keyTh?$keyTh:$thId; 
+                                #$irows = $irows + loadTable($TableObjectLoc, get_connection($dsn, $user, $pass), $Param, $key);
+                            }
+                            sleep 2;
+                            if($Param->{debug} == 1)
+                            {
+                                print "Thread running pool  ".keys(%ThreadsPool)."\n";
+                            }
+                
+                            if(keys(%ThreadsPool) > 0 && keys(%ThreadsPool) < $parallel && $localParallel > 1)
+                            {
+                                goto ADDToPool;
+                                
+                            }
+                            elsif(keys(%ThreadsPool) > 0){
+                                goto THLoop;
+                            }
             }
-            elsif(keys(%ThreadsPool) > 0){
-                goto THLoop;
+            else{
+                    my $TableObjectLoc = $tablesMap{$KeyTables[$iCTables]};
+                    if($Param->{debug} == 1){print "LOADING TABLE $TableObjectLoc->{name} \n";}
+                    $irows = $irows + loadTable($TableObjectLoc, get_connection($dsn, $user, $pass), $Param, $key);
+                    $iCTables++;
+                
             }
                 
         }
 # house keeping
-        for my $keyTh (keys(%ThreadsPool)){
-                my $thr = $ThreadsPool{$keyTh};
-                thr->exit() if thr->can('exit');
-                delete $ThreadsPool{$keyTh};
+        if($parallel > 0){
+            for my $keyTh (keys(%ThreadsPool)){
+                    my $thr = $ThreadsPool{$keyTh};
+                    thr->exit() if thr->can('exit');
+                    delete $ThreadsPool{$keyTh};
+            }
         }
-
         
         #$dbh->do('SET autocommit=0');
         $dbh->do('COMMIT');
         $dbh->do('SET UNIQUE_CHECKS=1');
         $dbh->do('SET FOREIGN_KEY_CHECKS=1');
-        $dbh->do('UNLOCK TABLES ');
+        $dbh->do("SET global wait_timeout=".$timeout);
         
         if($tar > 0 ){
             rmtree($dbPath);
@@ -1113,16 +1286,11 @@ sub loadTable($$$$){
         my $tableFile ='';
         my $tableName = '';
         my $extention = "";
-        
-        if($Param->{debug} == 1)
-        {
-            print "Processing  $file\n" if -T "$file";
-        }
 
         $extention = substr($file,index($file,'.')+1,length($file));
         if($extention eq "gz"){
             my $filedest = substr($file,0,index($file,'.')).".csv";
-            gunzip  "${file}" => "${filedest}" or die "gzip failed: $GzipError\n";
+            gunzip  "${file}" => "${filedest}" or die "gzip failed: $GunzipError\n";
             $file = $filedest;
         }
             my $index = index($file,'.');
@@ -1136,8 +1304,10 @@ sub loadTable($$$$){
             $tableFile = $file;        
 
             my $row = undef;
-            $dbh->do('LOCK TABLES '.${key}.'.'.$TableObjectLoc->{name}.' WRITE');
-            $dbh->do('ALTER TABLE '.${key}.'.'.$TableObjectLoc->{name}.' DISABLE KEYS');
+            #$dbh->do('LOCK TABLES '.${key}.'.'.$TableObjectLoc->{name}.' WRITE');
+            #$dbh->do('ALTER TABLE '.${key}.'.'.$TableObjectLoc->{name}.' DISABLE KEYS');
+            if($Param->{debug} == 1){print "Processing  $tableFile\n";}
+            
             if($Param->{debug} == 1){
                 print "\nLOAD DATA INFILE '${tableFile}' IGNORE INTO TABLE ${key}.$TableObjectLoc->{name}  FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES TERMINATED BY '\\r\\n'\n" ;     
                 
@@ -1160,26 +1330,28 @@ sub loadTable($$$$){
             if($extention eq "gz"){
                 unlink "${file}";
             }
-            $dbh->do('ALTER TABLE '.${key}.'.'.$TableObjectLoc->{name}.' ENABLE KEYS');            
+            $dbh->do('COMMIT');            
+            #$dbh->do('ALTER TABLE '.${key}.'.'.$TableObjectLoc->{name}.' ENABLE KEYS');            
         
             #$itables++;
             if(defined($row) && $row > 0E0 )
             {
                 $irows = $irows + $row;
             }
-            
-            $dbh->do('COMMIT');
     }
     #dbh->disconnect();
+    sleep 2;
     return $irows;
-
+   
 }
 
 
 
 sub splitFile($$){
+    
     my $Param = shift;
     my $filesize = shift;
+    my $dbh = shift;
     my $thid = threads->self()->tid();
     my $PathFile = $Param->{splitfile};  
     my $Lines = $Param->{splitrows};
@@ -1188,9 +1360,10 @@ sub splitFile($$){
     my $logTableFile = $PathFile.".log";
     my $chunkSize = 0;
     my $chunkNumber = 0;
+    my $debug = $Param->{debug};
  
-    $chunkSize = $sizelimit/($filesize/$Lines);
-    $chunkNumber = $Lines/$chunkSize;
+    $chunkSize = eval($sizelimit/($filesize/$Lines));
+    $chunkNumber = eval($Lines/$chunkSize);
     my $eachBytes = eval($filesize/$Lines);
     
     printf("Thread id =%2s Number of lines =%2s Processing file =%2s   Table Process Log =%2s \n", $thid,$Lines,$PathFile.".csv",$PathFile.".log" );
@@ -1203,36 +1376,62 @@ sub splitFile($$){
                 FILELOGT->autoflush(1);
     }
 
-    open(MASTER, $PathFile.".csv") or die("Could not open  file.");
+    open MASTER,'<', $PathFile.".csv" or die("Could not open  file.");
+    
+    #tie my @Master, 'Tie::File', $PathFile.".csv", memory => 20_000_000_000 or die("Could not open  file.");
     
     my $count = 0;
     my $linecount = 0;
     my $GlobalLinecount = 0;
     my $chunk = 1;
+    my $flushLine = 0;
     
     #open first chunk
     my $cunckFile = $PathFile."#chunk_$chunk";
+    
     open(CHUNK, '>',$cunckFile.".csv") or die("Could not open  file.");
+    
+    my $CHUNK = new IO::File "> ${cunckFile}.csv";
     
     my $startTime = localtime;
     my $endTime = localtime;
+    my $filesizeChunk = 0;
+    
     print FILELOGT sprintf("Chunk id =%2s Starting, Start time =%2s, File =%2s \n", $chunk,$startTime,$PathFile."#chunk_$chunk.csv" );        
     #loop from the master file and split it in to chunks
-    foreach my $line (<MASTER>)  {   
-        print CHUNK $line;
+    while(<MASTER>){
+    #foreach my $line (<MASTER>)  {
+    #for(@Master){    
+        #print CHUNK $Master[$linecount];
+        print CHUNK $_;
+        
         #increments local counters
         ++$count;
         ++$linecount;
         ++$GlobalLinecount;
+        ++$flushLine;
         
-        if($count > $chunkSize){
+        if($flushLine > 1000){
+            CHUNK->autoflush(1);
+            $flushLine = 0;
+            $dbh->do("Select now()");
+            print ".";
+        }
+        
+        my $fileEavl = $cunckFile.".csv";
+        $filesizeChunk = -s $fileEavl;
+        #if($count > $chunkSize){
+        if($filesizeChunk > $sizelimit){            
             #reset local chunk and push information with time and location on the table log;
             $endTime = localtime;
-            print FILELOGT sprintf("Chunk id =%2s Filled, Start time =%2s End time =%2s, File =%2s \n", $chunk,$startTime,$endTime,$PathFile."#chunk_$chunk.csv" );
+            if($debug >0){ print FILELOGT sprintf("Chunk id =%2s Filled, Start time =%2s End time =%2s, File =%2s \n", $chunk,$startTime,$endTime,$PathFile."#chunk_$chunk.csv" );}
             
             CHUNK->autoflush(1);
+            $filesizeChunk = 0;
             close(CHUNK);
+            undef ($CHUNK);
             ++$chunk;
+            print "\n * \n";
             
             #compress the close file and remove original 
             if($compress >0 ){
@@ -1258,6 +1457,9 @@ sub splitFile($$){
     }
     $endTime = localtime;
     print FILELOGT sprintf("Chunk id =%2s Filled, Start time =%2s End time =%2s, File =%2s \n", $chunk,$startTime,$endTime,$PathFile."#chunk_$chunk.csv" );
+    #if (!undef $CHUNK){$CHUNK->flush;}
+    
+    
     close(CHUNK);
 
     if($compress >0 ){
@@ -1265,14 +1467,11 @@ sub splitFile($$){
         gzip  $cunckFile.".csv" =>  $cunckFile.".gz" or die "gzip failed: $GzipError\n";
         unlink $cunckFile.".csv";
     }
-    
+    #$CHUNK->close;
     #close the master file and remove it    
     close(MASTER);
+    #undef  @Master;
     unlink $PathFile.".csv";
-
-
-
-
     close(FILELOGT);
 }
 
@@ -1368,7 +1567,12 @@ export.pl  -u=root -p=mysql -H=127.0.0.1 -P=3310 -b=1 -t=3_12_2011 --tar_output=
     Default number of thread is 1 so not parallel load.
     It is possible to set any number up to 8.
   
-
+--server_role
+    the role could be master|slave|nolock
+    Master will executer FTWRL and keep the Server lock until the end
+    Slave will stop replication and NO LOCK assuming no one is writing
+    Nolock is just doing no lock so if the server will get writes data wil be probably inconsistent.
+    This is normally for test purpose or if you know what you are doing.
 
 -------- Output handling PARAMETERS ----------------
 --tar_output [0|1] Default 0
