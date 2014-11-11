@@ -19,13 +19,14 @@
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
-use threads ('yield','stack_size' => 64*4096,'exit' => 'threads_only','stringify');
+#use threads ('yield','stack_size' => 64*4096,'exit' => 'threads_only','stringify');
 use File::Path 'rmtree';
 use Tie::File;
+use IO::File;
 use Cwd qw();
-use IO::Compress::Gzip qw(gzip $GzipError) ;
-use IO::Uncompress::Gunzip qw(gunzip $GunzipError) ;
-use Archive::Tar;
+#use IO::Compress::Gzip qw(gzip $GzipError) ;
+#use IO::Uncompress::Gunzip qw(gunzip $GunzipError) ;
+#use Archive::Tar;
 use visualization;
 use commonfunctions;
 use mysqldbcommon;
@@ -98,6 +99,16 @@ $Param->{appheader}.="\t========================================================
 
 $Param->{mysqlbase}=undef;
 #$Param->{outfile};
+
+################################
+#Simple Mode alert#
+################################
+sub simpleModeAlert(){
+    print "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\nNO multithread or Compression support is allowed in simple mode\nChange the parameters to set one thread only\nand NO compression\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n";
+    exit 1;
+}
+
+
 
 ################################
 #INIZIALIZATION SECTION [START]#
@@ -500,7 +511,7 @@ sub exportDataFromTables($)
     ####################################################################
     # IF Slave role stop slave before doing dump
     ####################################################################
-    if (defined $Param->{server_role} && ($Param->{server_role} eq 'slave' || $Param->{server_role} eq 'all')){
+    if (defined $Param->{server_role} && ($Param->{server_role} eq 'slave'  || $Param->{server_role} eq 'all') ){
             print "!!!!!!!!!!!!!! Stopping SLAVE at: $time [START]] !!!!!!!!!!!!!!\n";
 
             $cmd = "STOP SLAVE";
@@ -521,17 +532,16 @@ sub exportDataFromTables($)
   
     my $timeout = get_variablesByName($dbh,"wait_timeout");
     my $wsrepOn=  get_variablesByName($dbh,"wsrep_on");
-    $dbh->do("SET GLOBAL max_allowed_packet=104857600");
     my $wsrepDesync=  get_variablesByName($dbh,"wsrep_desync");
     
     $dbh->do("SET global wait_timeout=14400");
     $dbh->do("SET wait_timeout=14400");
-    
+    $dbh->do("SET GLOBAL max_allowed_packet=104857600");
     if(defined $wsrepOn && $wsrepOn eq "ON" && $wsrepDesync eq "OFF"){
         #$dbh->do("SET GLOBAL wsrep_desync=OFF");
         $dbh->do("SET GLOBAL wsrep_desync=ON");
     }
-    if (defined $Param->{server_role} && ($Param->{server_role} eq 'master' || $Param->{server_role} eq 'all' )){
+    if (defined $Param->{server_role} && ($Param->{server_role} eq 'master'  || $Param->{server_role} eq 'all') ){
         print "FLUSH NO_WRITE_TO_BINLOG TABLES WITH READ LOCK $time [START]] \n";
         $dbh->do("FLUSH NO_WRITE_TO_BINLOG TABLES WITH READ LOCK");
     }
@@ -688,7 +698,7 @@ sub exportDataFromTables($)
             " -u".$Param->{user}.
             " -p".$Param->{password};
             if($binlog_active == 1){
-                $mysqldump = $mysqldump." --single-transaction  "
+                $mysqldump = $mysqldump." --single-transaction "
             }
             #" -P".$Param->{port}." --no-data ".$key." > $dbPath/$key.sql";
             $mysqldump = $mysqldump." -P".$Param->{port}." --no-data -R --triggers ".$key." > $dbPath/$key.sql";
@@ -796,34 +806,35 @@ sub exportDataFromTables($)
         
 
        if($tar > 0){
-            my $tar = Archive::Tar->new;
-            chdir $dbPath;
-            my $path = Cwd::cwd();
-            print "$path\n";
-
-            opendir my($d), "." or die "Could not open directory [$dbPath]: $!";
-
-            my @files = undef;
-            
-            foreach my $file ( readdir $d ) {
-                if($file ne ".."){
-                    push(@files,$file);
-                }
-            }
-            splice @files, 0,1;
-            
-            foreach my $tarInfile(sort @files){
-                $tar->add_files($tarInfile);
-                if($compress > 1 ){
-                    $tar->write("../".$key.$bkup_timestamp.".tar.gz",COMPRESS_GZIP );
-                }
-                else
-                {
-                    $tar->write("../".$key.$bkup_timestamp.".tar" );
-                }
-            }
-            chdir "../";
-            rmtree($dbPath);
+            simpleModeAlert();
+            #my $tar = Archive::Tar->new;
+            #chdir $dbPath;
+            #my $path = Cwd::cwd();
+            #print "$path\n";
+            #
+            #opendir my($d), "." or die "Could not open directory [$dbPath]: $!";
+            #
+            #my @files = undef;
+            #
+            #foreach my $file ( readdir $d ) {
+            #    if($file ne ".."){
+            #        push(@files,$file);
+            #    }
+            #}
+            #splice @files, 0,1;
+            #
+            #foreach my $tarInfile(sort @files){
+            #    $tar->add_files($tarInfile);
+            #    if($compress > 1 ){
+            #        $tar->write("../".$key.$bkup_timestamp.".tar.gz",COMPRESS_GZIP );
+            #    }
+            #    else
+            #    {
+            #        $tar->write("../".$key.$bkup_timestamp.".tar" );
+            #    }
+            #}
+            #chdir "../";
+            #rmtree($dbPath);
             
        }
         
@@ -847,7 +858,7 @@ sub exportDataFromTables($)
     ####################################################################
     # IF Slave role stop slave before doing dump
     ####################################################################
-    if (defined $Param->{server_role} && ($Param->{server_role} eq 'slave' || $Param->{server_role} eq 'all') ){
+    if (defined $Param->{server_role} && ($Param->{server_role} eq 'slave'  || $Param->{server_role} eq 'all') ){
             print "!!!!!!!!!!! Starting SLAVE at: $time [START]] !!!!!!!!!\n";
 
             $dbh->{HandleError} = sub {mysqldbcommon::handle_error($dbh,1,"Slave cannot start")};
@@ -930,11 +941,13 @@ sub exportTable($$$$){
 #                $chunks = splitFile($Param,"${dbPath}/${dimTableExp}",$rows);
     }
     else{
+        
         if($compress >0 && $compress < 2){
-            #compress the close file and remove original 
-            gzip  "${dbPath}/${dimTableExp}" => "${dbPath}/${dimTable}".".gz" or die "gzip failed: $GzipError\n";
-            unlink "${dbPath}/${dimTableExp}";
-            
+            simpleModeAlert();    
+        #    #compress the close file and remove original 
+        #    gzip  "${dbPath}/${dimTableExp}" => "${dbPath}/${dimTable}".".gz" or die "gzip failed: $GzipError\n";
+        #    unlink "${dbPath}/${dimTableExp}";
+        #    
         }
     }
     
@@ -1292,9 +1305,10 @@ sub loadTable($$$$){
 
         $extention = substr($file,index($file,'.')+1,length($file));
         if($extention eq "gz"){
-            my $filedest = substr($file,0,index($file,'.')).".csv";
-            gunzip  "${file}" => "${filedest}" or die "gzip failed: $GunzipError\n";
-            $file = $filedest;
+            simpleModeAlert();
+            #my $filedest = substr($file,0,index($file,'.')).".csv";
+            #gunzip  "${file}" => "${filedest}" or die "gzip failed: $GunzipError\n";
+            #$file = $filedest;
         }
             my $index = index($file,'.');
             
@@ -1438,8 +1452,9 @@ sub splitFile($$){
             
             #compress the close file and remove original 
             if($compress >0 ){
-                gzip  $cunckFile.".csv" =>  $cunckFile.".gz" or die "gzip failed: $GzipError\n";
-                unlink $cunckFile.".csv";
+                simpleModeAlert();                
+                #gzip  $cunckFile.".csv" =>  $cunckFile.".gz" or die "gzip failed: $GzipError\n";
+                #unlink $cunckFile.".csv";
             }
             
             #open new file
@@ -1466,9 +1481,10 @@ sub splitFile($$){
     close(CHUNK);
 
     if($compress >0 ){
-        #compress the close file and remove original 
-        gzip  $cunckFile.".csv" =>  $cunckFile.".gz" or die "gzip failed: $GzipError\n";
-        unlink $cunckFile.".csv";
+        #compress the close file and remove original
+        simpleModeAlert();
+        #gzip  $cunckFile.".csv" =>  $cunckFile.".gz" or die "gzip failed: $GzipError\n";
+        #unlink $cunckFile.".csv";
     }
     #$CHUNK->close;
     #close the master file and remove it    
@@ -1585,10 +1601,10 @@ export.pl  -u=root -p=mysql -H=127.0.0.1 -P=3310 -b=1 -t=3_12_2011 --tar_output=
 --compress_mode [0|1|2] Default 0
     Using mode 1 it will compress Gzip each data file
     Using mode 2 it will compress the final TAR file 
-
+  
 --------- GRANTS --------------
 GRANT SUPER,SELECT, SHOW VIEW, RELOAD, REPLICATION CLIENT, LOCK TABLES, EVENT, TRIGGER ON *.* TO 'backup'\@'127.0.0.1' identified by 'secret';
-  
+
 
 EOF
 }
