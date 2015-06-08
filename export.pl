@@ -1587,7 +1587,7 @@ export.pl  -u=root -p=mysql -H=127.0.0.1 -P=3310 -b=1 -t=3_12_2011 --tar_output=
     Using mode 2 it will compress the final TAR file 
 
 --------- GRANTS --------------
-GRANT SUPER,SELECT, SHOW VIEW, RELOAD, REPLICATION CLIENT, LOCK TABLES, EVENT, TRIGGER ON *.* TO 'backup'\@'127.0.0.1' identified by 'secret';
+GRANT SUPER,INSERT,UPDATE,SELECT, SHOW VIEW, RELOAD,FILE,CREATE,DROP, REPLICATION CLIENT, LOCK TABLES, EVENT, TRIGGER ON *.* TO 'backup'\@'127.0.0.1' identified by 'secret';
   
 
 EOF
